@@ -1,0 +1,167 @@
+#----------------------------------------------------------------------
+# 
+#  4190.308 Computer Architecture (Fall 2018)
+#
+#  Project #5: Optimizing Performance on a Pipelined Y86-64 Processor
+#
+#  December 4, 2018
+#
+#  Jin-Soo Kim (jinsoo.kim@snu.ac.kr)
+#  Systems Software & Architecture Laboratory
+#  Dept. of Computer Science and Engineering
+#  Seoul National University
+#  http://csl.snu.ac.kr
+#
+#----------------------------------------------------------------------
+
+bmp_mosaic:
+	# imgptr is in %rdi
+	# width  is in %rsi
+	# height is in %rdx
+	# size 	 is in %rcx
+	#-----------------------------------------------------------------
+
+    pushq %rsi  # W
+    rrmovq %rsi, %rax   # rax = w
+    iaddq $1, %rax
+    irmovq $3, %rbx
+    irmovq $4, %r13
+    mulq %rbx, %rax     # rax = 3w + 3
+
+    rrmovq %rdx, %r9    # r9 = H
+    irmovq $1, %r14     # r14 = 1
+    divq %r13, %rax     # rax = 3w + 3 / 4
+
+    divq %rcx, %rdx     # H / K
+    divq %rcx, %rsi     # W / K
+    mulq %r13, %rax     # # rax = line
+
+    rrmovq %rdx, %r10   # r10 = H/K * K
+    mulq %rcx, %r10
+    subq %r10, %r9      # r9 = initial  cy
+    pushq %rax
+
+    jg no               # 나머지 없을 경우 ( 0 일 경우 ) :
+    subq %r14, %rdx     # 높이 cnt 감소
+    rrmovq %rcx, %r9    # (세로 길이 : k로 설정)
+
+no:
+    pushq %r9       # initial cy
+        rrmovq %rdi, %rbp   # pointer
+
+    pushq %rdx      # 세로 cnt
+        irmovq $3, %r13     # r13 : 3k
+
+    pushq %rsi      # 가로 cnt
+    mulq %rcx, %r13
+
+    pushq %rdx      # 세로 cnt 원형
+    pushq %rcx      # K
+        subq %r13, %rax     # rax : line - 3k ( 가로 길이 : rcx)
+
+    pushq %rdi
+
+    rrmovq %rax, %rdi
+
+    rmmovq %rax, 48(%rsp)
+
+Block:
+    pushq %rbp          # 초기 포인터
+    rrmovq %rcx, %r8    # cx = rcx ( rcx를 바꿔야 한다)
+    irmovq $0, %r10     # R
+    irmovq $0, %r11     # G
+    irmovq $0, %r12     # B
+    pushq %r9           # cy값
+
+addition:
+
+    mrmovb (%rbp), %rax
+    mrmovb 1(%rbp), %rdx
+    mrmovb 2(%rbp), %r13
+
+    addq %rbx, %rbp     # ptr += 3
+
+    addq %rax, %r10
+    addq %rdx, %r11
+    addq %r13, %r12
+    subq %r14, %r8      # 일단 loop unrolling 없이
+    jg addition
+
+    rrmovq %rcx, %r8
+        addq %rdi, %rbp     # line changed
+
+    subq %r14, %r9
+
+    jg addition     # 끝났으면 -> 나눠서 더해줘야 함
+
+    rrmovq %rcx, %rax
+    popq %r9            # cy 복구
+    rrmovq %rcx, %r8    # cnt(cx, cy) 복구 : cx = rcx
+    mulq %r9, %rax      # 총 개수
+    popq %rbp           # 포인터 복구
+    divq %rax, %r10
+    divq %rax, %r11
+    divq %rax, %r12
+
+reset:
+    rmmovb %r10, (%rbp)
+    rmmovb %r11, 1(%rbp)
+    rmmovb %r12, 2(%rbp)
+    addq %rbx, %rbp
+    subq %r14, %r8
+    jg reset
+
+    rrmovq %rcx, %r8    # cx 복구
+    addq %rdi, %rbp     # line change
+    subq %r14, %r9
+    jg reset
+
+# 한 Block 완료
+
+    mrmovq 32(%rsp), %rax       # 높이 cnt --
+    mrmovq 8(%rsp), %r9     # cy = k
+    subq %r14, %rax         # set cc
+    rmmovq %rax, 32(%rsp)
+
+    jge Block
+
+#   새로운 라인
+
+    popq %rbp
+    rrmovq %rbx, %rax
+    mulq %rcx, %rax     # rax = 3 k
+    addq %rax, %rbp     # pointer 원위치 + a
+    pushq %rbp
+
+    mrmovq 16(%rsp), %rax   # 초기 cnt 높이
+    mrmovq 24(%rsp), %rdx   # 가로 cnt --
+
+    mrmovq 40(%rsp), %r9    # 초기 cy 설정
+    subq %r14, %rdx
+
+    rmmovq %rdx, 24(%rsp)
+        rmmovq %rax, 32(%rsp)   # 높이 cnt 리셋
+
+    jg  Block
+    jl end
+# 마지막 줄만 남음
+
+    mulq %rbx, %rcx     # rcx : 3k
+    addq  %rcx, %rdi     # rdi : line ( 가로 길이 : rcx)
+
+    mrmovq 56(%rsp), %rcx   # W
+    rrmovq %rcx, %rax       #rax : W
+    mrmovq 8(%rsp), %rsi   # K
+    divq %rsi, %rax     # W/K
+    mulq %rsi, %rax     # W/K * K
+    subq %rax, %rcx      # cx
+
+    rrmovq %rcx, %rax
+    mulq %rbx, %rax     # 3 * cx
+    subq %rax, %rdi
+
+
+    iaddq $0, %rcx
+    jg  Block
+end:
+	ret
